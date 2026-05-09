@@ -12,7 +12,7 @@ import sqlite3
 import time
 import plotly.express as px
 
-# ---------------- CONFIG ----------------
+#CONFIG 
 st.set_page_config(page_title="Face Attendance", layout="wide")
 
 st.markdown("""
@@ -25,7 +25,6 @@ footer {visibility: hidden;}
 nimgs = 50
 datetoday = str(date.today())
 
-# FIX 1: Use cv2.data.haarcascades to prevent "missing haarcascade_frontalface_default.xml" errors
 cascade_path = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_default.xml')
 face_detector = cv2.CascadeClassifier(cascade_path)
 os.makedirs('static/faces', exist_ok=True)
@@ -64,7 +63,7 @@ def login_user(username, password):
     conn.close()
     return result
 
-# ---------------- DATABASE ----------------
+#DATABASE
 def init_db():
     conn = sqlite3.connect('attendance.db')
     cursor = conn.cursor()
@@ -107,7 +106,7 @@ def init_db():
 
 init_db()
 
-# ---------------- TIMETABLE ----------------
+#TIMETABLE
 timetable = {
     "Monday": ["AI", "ML"],
     "Tuesday": ["DBMS", "AI"],
@@ -143,7 +142,7 @@ def auto_add_classes():
     
 auto_add_classes()
 
-# ---------------- FUNCTIONS ----------------
+#FUNCTIONS
 def normalize_roll(value):
     try:
         return int(float(value))
@@ -198,7 +197,7 @@ def train_model():
         print("Model trained successfully")
 
 def add_attendance(name, subject):
-    # FIX 3: Robust string split in case of multiple underscores
+
     parts = name.rsplit('_', 1)
     if len(parts) == 2:
         username, userid = parts
@@ -294,7 +293,7 @@ def get_absentees(subject, selected_date):
     absent = students[~students["roll"].isin(present["roll"])]
     return absent
 
-# FIX 4: Replace deprecated VideoTransformerBase with VideoProcessorBase
+
 def get_processor_factory(subject):
     class FaceRecognitionProcessor(VideoProcessorBase):
         def __init__(self):
@@ -328,7 +327,7 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.role = None    
 
-# ---------------- UI ----------------
+#UI
 st.markdown("## Face Recognition Attendance System")
 st.markdown("---")
 
@@ -405,7 +404,7 @@ if not st.session_state.logged_in:
 
     st.stop()
 
-# ---------------- SIDEBAR ----------------
+#SIDEBAR
 st.sidebar.title("📊 Navigation")
 
 if st.session_state.role == "admin":
@@ -430,7 +429,7 @@ if st.sidebar.button("Logout"):
     st.session_state.role = None
     st.rerun()
 
-# ---------------- HOME ----------------
+#HOME
 if menu in ["🏠 Admin Dashboard", "🏠 My Dashboard"]:
 
     st.markdown("<h1 style='text-align: center; color: #4CAF50;'>📊 Dashboard</h1>", unsafe_allow_html=True)
@@ -581,7 +580,7 @@ elif menu in ["📊 Analytics", "📊 My Analytics"]:
     else:
         st.info("Not enough data today to generate insights.")
 
-# ---------------- START CAMERA ----------------
+#START CAMERA
 elif menu == "📸 Attendance":
 
     st.subheader("Camera Control")
@@ -627,7 +626,7 @@ elif menu == "📸 Attendance":
                 video_processor_factory=get_processor_factory(subject) # FIX 5: Uses new processor factory
             )
 
-# ---------------- SUBJECT TABLES ----------------
+#SUBJECT TABLES 
 elif menu in ["📚 Subjects", "📚 My Subjects"]:
 
     conn = sqlite3.connect('attendance.db')
@@ -689,7 +688,7 @@ elif menu in ["📚 Subjects", "📚 My Subjects"]:
     else:
         st.info("No attendance data available yet.")
 
-# ---------------- ADD USER ----------------
+#ADD USER
 elif menu == "➕ Add User" and st.session_state.role == "admin":
 
     st.subheader("Register New User")
@@ -723,7 +722,6 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
                 user_dir = f'static/faces/{name}_{user_id}'
                 os.makedirs(user_dir, exist_ok=True)
 
-                # FIX 6: Better camera error handling and bounds checking
                 cap = cv2.VideoCapture(0)
                 if not cap.isOpened():
                     st.error("Error: Could not access the camera. Make sure it is connected and not used by another app.")
