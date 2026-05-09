@@ -337,7 +337,7 @@ if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        st.markdown("<h3 style='text-align: center;'>🔐 Secure Login Portal</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='text-align: center;'>Login Portal</h3>", unsafe_allow_html=True)
         
         login_type = st.radio("Choose Portal", ["Student", "Admin"], horizontal=True)
         
