@@ -10,9 +10,6 @@ import sqlite3
 import time
 import plotly.express as px
 
-
-
-
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Face Attendance", layout="wide")
 
