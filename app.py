@@ -22,7 +22,7 @@ footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-nimgs = 50
+nimgs = 5
 datetoday = str(date.today())
 
 # FIX 1: Use cv2.data.haarcascades to prevent "missing haarcascade_frontalface_default.xml" errors
@@ -716,48 +716,83 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
                 st.success("✅ Student saved successfully!")
             else:
                 st.warning("⚠️ Enter name and ID")
-
     with col2:
-        if st.button("📸 Capture Face"):
-            if name and user_id:
-                user_dir = f'static/faces/{name}_{user_id}'
-                os.makedirs(user_dir, exist_ok=True)
 
-                # FIX 6: Better camera error handling and bounds checking
-                cap = cv2.VideoCapture(0)
-                if not cap.isOpened():
-                    st.error("Error: Could not access the camera. Make sure it is connected and not used by another app.")
+      if "camera_key" not in st.session_state:
+        st.session_state.camera_key = 0     
+      if not name or not user_id:
+
+        st.button("📸 Capture Face", disabled=True)
+        st.warning("⚠️ Enter name and ID first")
+
+      else:
+
+        user_dir = f"static/faces/{name}_{user_id}"
+        os.makedirs(user_dir, exist_ok=True)
+
+        existing_images = len(os.listdir(user_dir))
+
+        # Hide camera after enough images collected
+        if existing_images < nimgs:
+
+            picture = st.camera_input(
+                f"Capture Face ({existing_images}/{nimgs})",
+                key=f"camera_{st.session_state.camera_key}"
+            )
+
+            if picture is not None:
+
+                file_bytes = np.asarray(
+                    bytearray(picture.read()),
+                    dtype=np.uint8
+                )
+
+                frame = cv2.imdecode(
+                    file_bytes,
+                    cv2.IMREAD_COLOR
+                )
+
+                faces = extract_faces(frame)
+
+                if len(faces) == 0:
+
+                    st.error("❌ No face detected!")
+
                 else:
-                    count = 0
-                    frame_placeholder = st.empty()
 
-                    while count < nimgs:
-                        ret, frame = cap.read()
-                        if not ret:
-                            st.error("Failed to capture image. Camera may have disconnected.")
-                            break
-                        
-                        faces = extract_faces(frame)
+                    x, y, w, h = faces[0]
 
-                        for (x, y, w, h) in faces:
-                            face = frame[y:y+h, x:x+w]
-                            cv2.imwrite(f'{user_dir}/{name}_{count}.jpg', face)
-                            count += 1
-                            if count >= nimgs:
-                                break
+                    face = frame[y:y+h, x:x+w]
 
-                        frame_placeholder.image(frame, channels="BGR")
+                    cv2.imwrite(
+                        f"{user_dir}/{name}_{existing_images}.jpg",
+                        face
+                    )
 
-                    cap.release()
-                    time.sleep(0.1)
-                    cv2.destroyAllWindows()
+                    st.success(
+                        f"✅ Image {existing_images + 1}/{nimgs} saved"
+                    )
 
-                    frame_placeholder.empty()
+                    # Refresh camera for next image
+                    st.session_state.camera_key += 1
 
-                    train_model()
+                    if existing_images + 1 >= nimgs:
 
-                    st.success("✅ Face data captured & model trained!")
-                    time.sleep(1)
+                        train_model()
+
+                        st.success(
+                            "🎉 Face data captured & model trained!"
+                        )
+
                     st.rerun()
+
+        else:
+
+            st.success("✅ Registration Complete")
+
+            if os.path.exists(
+                "static/face_recognition_model.pkl"
+            ):
+                st.success("✅ Model file created")
             else:
-                st.warning("⚠️ Enter name and ID first")
+                st.error("❌ Model file not found")
