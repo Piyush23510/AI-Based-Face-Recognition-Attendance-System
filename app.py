@@ -4,24 +4,11 @@ import os
 from datetime import date, datetime
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
-from streamlit_webrtc import WebRtcMode, RTCConfiguration
-import av
 import pandas as pd
 import joblib
 import sqlite3
 import time
 import plotly.express as px
-
-
-RTC_CONFIGURATION = RTCConfiguration(
-    {
-        "iceServers": [
-            {"urls": ["stun:stun.l.google.com:19302"]}
-        ]
-    }
-)
-
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Face Attendance", layout="wide")
@@ -304,36 +291,6 @@ def get_absentees(subject, selected_date):
 
     absent = students[~students["roll"].isin(present["roll"])]
     return absent
-
-# FIX 4: Replace deprecated VideoTransformerBase with VideoProcessorBase
-def get_processor_factory(subject):
-    class FaceRecognitionProcessor(VideoProcessorBase):
-        def __init__(self):
-            self.model = joblib.load('static/face_recognition_model.pkl')
-            self.marked = set()
-            self.subject = subject
-
-        def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-            img = frame.to_ndarray(format="bgr24")
-            faces = extract_faces(img)
-
-            for (x, y, w, h) in faces[:1]:
-                face_img = cv2.resize(img[y:y+h, x:x+w], (50, 50)).reshape(1, -1)
-
-                name = self.model.predict(face_img)[0]
-
-                print("Predicted:", name)
-
-                if name not in self.marked and "_" in name:
-                    if add_attendance(name, self.subject):
-                        self.marked.add(name)
-
-                cv2.rectangle(img, (x, y), (x+w, y+h), (0,255,0), 2)
-                cv2.putText(img, name, (x, y-10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
-
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
-    return FaceRecognitionProcessor
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -632,18 +589,43 @@ elif menu == "📸 Attendance":
     if not os.path.exists('static/face_recognition_model.pkl'):
         st.error("Model not trained yet! Please add a user first.")
     else:
-        if st.session_state.run_camera:
-            webrtc_streamer(
-               key="attendance",
-               mode=WebRtcMode.SENDRECV,
-               rtc_configuration=RTC_CONFIGURATION,
-               video_processor_factory=get_processor_factory(subject),
-               media_stream_constraints={
-                "video": True,
-                "audio": False
-               },
-               async_processing=True,
+      if st.session_state.run_camera:
+
+       picture = st.camera_input("Take Attendance")
+
+       if picture is not None:
+
+        file_bytes = np.asarray(
+            bytearray(picture.read()),
+            dtype=np.uint8
+        )
+
+        frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+        faces = extract_faces(frame)
+
+        if len(faces) > 0:
+
+            model = joblib.load(
+                'static/face_recognition_model.pkl'
             )
+
+            x, y, w, h = faces[0]
+
+            face = cv2.resize(
+                frame[y:y+h, x:x+w],
+                (50, 50)
+            ).reshape(1, -1)
+
+            name = model.predict(face)[0]
+
+            if add_attendance(name, subject):
+                st.success(f"Attendance marked for {name}")
+            else:
+                st.warning("Attendance already marked")
+
+        else:
+            st.error("No face detected")
 
 # ---------------- SUBJECT TABLES ----------------
 elif menu in ["📚 Subjects", "📚 My Subjects"]:
