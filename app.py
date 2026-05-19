@@ -10,6 +10,9 @@ import sqlite3
 import time
 import plotly.express as px
 
+
+
+
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Face Attendance", layout="wide")
 
@@ -580,11 +583,6 @@ elif menu == "📸 Attendance":
 
             conn.commit()
             conn.close()
-
-    with col2:
-        if st.button("Stop Camera"):
-            st.session_state.run_camera = False
-            st.success("✅ Attendance marked successfully!")
 
     if not os.path.exists('static/face_recognition_model.pkl'):
         st.error("Model not trained yet! Please add a user first.")
