@@ -444,7 +444,7 @@ if menu in ["🏠 Admin Dashboard", "🏠 My Dashboard"]:
 
     if st.session_state.role == "admin":
         st.markdown("### 👨‍🎓 All Students")
-        st.dataframe(df_students)
+        st.dataframe(df_students,width="stretch",hide_index=None)
     else:
         st.markdown("### 👤 My Profile")
         if not df_students.empty:
@@ -452,7 +452,7 @@ if menu in ["🏠 Admin Dashboard", "🏠 My Dashboard"]:
             my_info = df_students[
                 df_students["roll"] == normalize_roll(st.session_state.roll)
             ]
-            st.dataframe(my_info)
+            st.dataframe(my_info,width="stretch",hide_index=None)
     
     df = get_today_attendance()
 
