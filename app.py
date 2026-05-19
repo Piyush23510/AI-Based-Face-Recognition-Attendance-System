@@ -5,12 +5,23 @@ from datetime import date, datetime
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+from streamlit_webrtc import WebRtcMode, RTCConfiguration
 import av
 import pandas as pd
 import joblib
 import sqlite3
 import time
 import plotly.express as px
+
+
+RTC_CONFIGURATION = RTCConfiguration(
+    {
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302"]}
+        ]
+    }
+)
+
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Face Attendance", layout="wide")
@@ -623,8 +634,15 @@ elif menu == "📸 Attendance":
     else:
         if st.session_state.run_camera:
             webrtc_streamer(
-                key="attendance",
-                video_processor_factory=get_processor_factory(subject) # FIX 5: Uses new processor factory
+               key="attendance",
+               mode=WebRtcMode.SENDRECV,
+               rtc_configuration=RTC_CONFIGURATION,
+               video_processor_factory=get_processor_factory(subject),
+               media_stream_constraints={
+                "video": True,
+                "audio": False
+               },
+               async_processing=True,
             )
 
 # ---------------- SUBJECT TABLES ----------------
