@@ -6,12 +6,13 @@ import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 import pandas as pd
 import joblib
-import sqlite3
 import time
 import plotly.express as px
 import bcrypt
+import psycopg2
+from dotenv import load_dotenv
 
-
+load_dotenv()
 
 #CONFIG
 st.set_page_config(
@@ -34,17 +35,19 @@ cascade_path = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_defa
 face_detector = cv2.CascadeClassifier(cascade_path)
 os.makedirs('static/faces', exist_ok=True)
 
+def get_conn():
+    return psycopg2.connect(
+        os.getenv("DATABASE_URL"),
+        sslmode="require"
+    )
 def register_user(username, password, role, roll):
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     username = username.strip()
     password = password.strip()
 
-    cursor.execute(
-        "SELECT username FROM users WHERE username=?",
-        (username,)
-    )
+    cursor.execute("SELECT * FROM users WHERE username=%s", (username,))
 
     if cursor.fetchone():
         st.error("Username already exists!")
@@ -58,10 +61,11 @@ def register_user(username, password, role, roll):
 
     try:
         cursor.execute(
-            "INSERT INTO users (username, password, role, roll) VALUES (?, ?, ?, ?)",
+            "INSERT INTO users (username, password, role, roll) VALUES (%s, %s, %s, %s)",
             (username, hashed_password, role, roll)
         )
         conn.commit()
+        st.cache_data.clear()
         st.success("Registration successful!")
 
     except Exception as e:
@@ -73,14 +77,13 @@ def login_user(username, password):
     username = username.strip()
     password = password.strip()
 
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT password, role, roll FROM users WHERE username=?",
-        (username,)
+    "SELECT password, role, roll FROM users WHERE username=%s",
+    (username,)
     )
-
     result = cursor.fetchone()
     conn.close()
 
@@ -105,7 +108,7 @@ def login_user(username, password):
 
 #DATABASE
 def init_db():
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -144,7 +147,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-init_db()
+if "db_initialized" not in st.session_state:
+    init_db()
 
 #TIMETABLE 
 timetable = {
@@ -163,24 +167,27 @@ def auto_add_classes():
 
     subjects_today = timetable.get(today_day, [])
 
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     for subject in subjects_today:
         cursor.execute("""
             SELECT * FROM classes 
-            WHERE subject=? AND date=?
+            WHERE subject=%s AND date=%s
         """, (subject, today_date))
 
         if cursor.fetchone() is None:
             cursor.execute("""
-                INSERT INTO classes VALUES (?, ?)
+                INSERT INTO classes VALUES (%s, %s)
             """, (subject, today_date))
 
     conn.commit()
     conn.close()
+    st.cache_data.clear()
     
-auto_add_classes()
+if "db_initialized" not in st.session_state:
+    auto_add_classes()
+    st.session_state.db_initialized = True
 
 #FUNCTIONS
 def normalize_roll(value):
@@ -245,12 +252,12 @@ def add_attendance(name, subject):
 
     now = datetime.now()
 
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     cursor.execute("""
         SELECT * FROM attendance 
-        WHERE roll=? AND date=? AND subject=?
+        WHERE roll=%s AND date=%s AND subject=%s
     """, (int(userid), str(now.date()), subject))
 
     if cursor.fetchone() is None:
@@ -259,9 +266,10 @@ def add_attendance(name, subject):
         print("Detected Roll:", userid)
 
         cursor.execute("""
-            INSERT INTO attendance VALUES (?, ?, ?, ?, ?)
+            INSERT INTO attendance VALUES (%s, %s, %s, %s, %s)
         """, (username, int(userid), subject, str(now.date()), now.strftime("%H:%M:%S")))
         conn.commit()
+        st.cache_data.clear()
         conn.close()
         return True
 
@@ -274,19 +282,33 @@ def safe_roll(value):
     except:
         return None
     
+@st.cache_data
+def get_students():
+    conn = get_conn()
+    df = pd.read_sql_query("""
+        SELECT username AS name, roll FROM users WHERE role='user'
+        UNION
+        SELECT name, roll FROM students
+    """, conn)
+    conn.close()
+    return df
+
+@st.cache_data
 def get_today_attendance():
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
 
     df = pd.read_sql_query(
-        "SELECT * FROM attendance WHERE date=?",
+        "SELECT * FROM attendance WHERE date=%s",
         conn,
         params=(datetoday,)
     )
 
     conn.close()
     return df
+
+@st.cache_data
 def calculate_percentage():
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
 
     classes_df = pd.read_sql_query(
         "SELECT subject, COUNT(*) as total_classes FROM classes GROUP BY subject",
@@ -315,8 +337,9 @@ def calculate_percentage():
 
     return merged
 
+@st.cache_data
 def get_absentees(subject, selected_date):
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
 
     students = pd.read_sql_query("""
         SELECT username AS name, roll FROM users WHERE role='user'
@@ -327,7 +350,7 @@ def get_absentees(subject, selected_date):
     present = pd.read_sql_query("""
         SELECT DISTINCT roll 
         FROM attendance 
-        WHERE subject=? AND date=?
+        WHERE subject=%s AND date=%s
     """, conn, params=(subject, selected_date))
 
     conn.close()
@@ -448,13 +471,7 @@ if menu in ["🏠 Admin Dashboard", "🏠 My Dashboard"]:
 
     st.markdown("<h1 style='text-align: center; color: #4CAF50;'>📊 Dashboard</h1>", unsafe_allow_html=True)
 
-    conn = sqlite3.connect('attendance.db')
-    df_students = pd.read_sql_query("""
-        SELECT username AS name, roll FROM users WHERE role='user'
-        UNION
-        SELECT name, roll FROM students
-    """, conn)
-    conn.close()
+    df_students = get_students()
 
     if st.session_state.role == "admin":
         st.markdown("### 👨‍🎓 All Students")
@@ -573,13 +590,7 @@ elif menu in ["📊 Analytics", "📊 My Analytics"]:
             st.plotly_chart(fig2, use_container_width=True)
 
             if st.session_state.role == "admin":
-                conn = sqlite3.connect('attendance.db')
-                df_students = pd.read_sql_query("""
-                    SELECT username AS name, roll FROM users WHERE role='user'
-                    UNION
-                    SELECT name, roll FROM students
-                """, conn)
-                conn.close()
+                df_students = get_students()
 
                 total_students = len(df_students)
                 present = len(df)
@@ -610,21 +621,22 @@ elif menu == "📸 Attendance":
         if st.button("Start Camera"):
             st.session_state.run_camera = True
             st.success("Camera started")
-            conn = sqlite3.connect('attendance.db')
+            conn = get_conn()
             cursor = conn.cursor()
 
             cursor.execute("""
                 SELECT * FROM classes 
-                WHERE subject=? AND date=?
+                WHERE subject=%s AND date=%s
             """, (subject, str(date.today())))
 
             if not cursor.fetchone():
                 cursor.execute("""
-                    INSERT INTO classes VALUES (?, ?)
+                    INSERT INTO classes VALUES (%s, %s)
                 """, (subject, str(date.today())))
 
             conn.commit()
             conn.close()
+            st.cache_data.clear()
 
     if not os.path.exists('static/face_recognition_model.pkl'):
         st.error("Please add a user first.")
@@ -681,7 +693,7 @@ elif menu == "📸 Attendance":
 #SUBJECT TABLES
 elif menu in ["📚 Subjects", "📚 My Subjects"]:
 
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     df = pd.read_sql_query("SELECT * FROM attendance", conn)
     conn.close()
 
@@ -704,28 +716,28 @@ elif menu in ["📚 Subjects", "📚 My Subjects"]:
         st.dataframe(filtered_df, use_container_width=True)
 
         if subject_filter != "All":
-            conn = sqlite3.connect('attendance.db')
+            conn = get_conn()
             check_class = pd.read_sql_query(
-                "SELECT * FROM classes WHERE subject=? AND date=?",
+                "SELECT * FROM classes WHERE subject=%s AND date=%s",
                 conn,
                 params=(subject_filter, selected_date)
             )
             conn.close()
 
             if check_class.empty:
-                st.warning("⚠️ No class conducted on this date")
+                st.warning(" No class conducted on this date")
             else:
                 absent_df = get_absentees(subject_filter, selected_date)
                 
                 if st.session_state.role == "admin":
-                    st.markdown("### 🚫 Absentees")
+                    st.markdown("### Absentees")
                     if not absent_df.empty:
                         st.dataframe(absent_df, use_container_width=True)
                         st.error(f"{len(absent_df)} students absent")
                     else:
-                        st.success("No absentees 🎉")
+                        st.success("No absentees ")
                 else:
-                    st.markdown("### 🚫 My Status")
+                    st.markdown("### My Status")
                     if not absent_df.empty:
                         absent_df["roll"] = absent_df["roll"].apply(normalize_roll)
                         my_absent = absent_df[
@@ -734,9 +746,9 @@ elif menu in ["📚 Subjects", "📚 My Subjects"]:
                         if not my_absent.empty:
                             st.error("You were absent for this class!")
                         else:
-                            st.success("You were present! 🎉")
+                            st.success("You were present!")
                     else:
-                        st.success("You were present! 🎉")
+                        st.success("You were present!")
     else:
         st.info("No attendance data available yet.")
 
@@ -751,50 +763,48 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
     col1, col2 = st.columns(2)
 
     with col1:
-     if st.button("💾 Save Student"):
+     if st.button("Save Student"):
         if not name or not user_id:
-            st.warning("⚠️ Enter name and ID")
+            st.warning("Enter name and ID")
         else:
             roll_val = safe_roll(user_id)
-
-            # 2. SECOND CHECK (invalid roll)
             if roll_val is None:
                 st.error("Roll number must be numeric!")
 
             else:
-                # 3. ACTUAL DATABASE INSERT
-                conn = sqlite3.connect('attendance.db')
+                conn = get_conn()
                 cursor = conn.cursor()
 
                 cursor.execute(
-                    "INSERT OR IGNORE INTO students VALUES (?, ?)",
-                    (name, roll_val)
+                  "INSERT INTO students VALUES (%s, %s) ON CONFLICT (roll) DO NOTHING",
+                  (name, roll_val)
                 )
 
                 conn.commit()
                 conn.close()
+                st.cache_data.clear()
 
-                st.success("✅ Student saved successfully!")
+                st.success("Student saved successfully!")
     with col2:
 
       if "camera_key" not in st.session_state:
         st.session_state.camera_key = 0
 
-    # ❌ BLOCK CAMERA IF INPUT IS INVALID
+    # validate inputs first
       if not name or not user_id:
-        st.warning("⚠️ Enter name and ID first")
-        st.stop()
+        st.warning("Enter name and ID first")
 
-      roll_val = safe_roll(user_id)
+      elif safe_roll(user_id) is None:
+        st.error("Invalid roll number. Camera disabled.")
 
-      if roll_val is None:
-        st.stop()
       else:
+        roll_val = safe_roll(user_id)
 
         user_dir = f"static/faces/{name}_{user_id}"
         os.makedirs(user_dir, exist_ok=True)
 
         existing_images = len(os.listdir(user_dir))
+
         if existing_images < nimgs:
 
             picture = st.camera_input(
@@ -809,21 +819,14 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
                     dtype=np.uint8
                 )
 
-                frame = cv2.imdecode(
-                    file_bytes,
-                    cv2.IMREAD_COLOR
-                )
+                frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
                 faces = extract_faces(frame)
 
                 if len(faces) == 0:
-
-                    st.error("❌ No face detected!")
-
+                    st.error("No face detected!")
                 else:
-
                     x, y, w, h = faces[0]
-
                     face = frame[y:y+h, x:x+w]
 
                     cv2.imwrite(
@@ -831,30 +834,20 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
                         face
                     )
 
-                    st.success(
-                        f"✅ Image {existing_images + 1}/{nimgs} saved"
-                    )
+                    st.success(f"Image {existing_images + 1}/{nimgs} saved")
 
-                    # Refresh camera for next image
                     st.session_state.camera_key += 1
 
                     if existing_images + 1 >= nimgs:
-
                         train_model()
-
-                        st.success(
-                            "🎉 Face data captured & model trained!"
-                        )
+                        st.success("Face data captured & model trained!")
 
                     st.rerun()
 
         else:
+            st.success("Registration Complete")
 
-            st.success("✅ Registration Complete")
-
-            if os.path.exists(
-                "static/face_recognition_model.pkl"
-            ):
-                st.success("✅ Model file created")
+            if os.path.exists("static/face_recognition_model.pkl"):
+                st.success("Model file created")
             else:
-                st.error("❌ Model file not found")
+                st.error("Model file not found")
