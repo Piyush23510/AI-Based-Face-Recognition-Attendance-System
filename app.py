@@ -195,7 +195,16 @@ def normalize_roll(value):
         return int(float(value))
     except:
         return None
+def has_users():
+    conn = get_conn()
+    cur = conn.cursor()
 
+    cur.execute("SELECT COUNT(*) FROM users WHERE role='user'")
+    count = cur.fetchone()[0]
+
+    conn.close()
+    return count > 0
+    
 def extract_faces(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_detector.detectMultiScale(gray, 1.2, 5)
@@ -618,43 +627,45 @@ elif menu == "📸 Attendance":
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("Start Camera"):
-            st.session_state.run_camera = True
-            conn = get_conn()
-            cursor = conn.cursor()
+     if st.button("Start Camera"):
+        st.session_state.run_camera = True
 
+        conn = get_conn()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT * FROM classes 
+            WHERE subject=%s AND date=%s
+        """, (subject, str(date.today())))
+
+        if not cursor.fetchone():
             cursor.execute("""
-                SELECT * FROM classes 
-                WHERE subject=%s AND date=%s
+                INSERT INTO classes VALUES (%s, %s)
             """, (subject, str(date.today())))
 
-            if not cursor.fetchone():
-                cursor.execute("""
-                    INSERT INTO classes VALUES (%s, %s)
-                """, (subject, str(date.today())))
+        conn.commit()
+        conn.close()
+        st.cache_data.clear()
 
-            conn.commit()
-            conn.close()
-            st.cache_data.clear()
+     if not has_users():
+        st.error("No users found. Please add a user first.")
 
-    MODEL_PATH = os.path.join("static", "face_recognition_model.pkl")
+     elif not os.path.exists('static/face_recognition_model.pkl'):
+        st.error("Model not trained. Please add users and capture faces.")
 
-    if not os.path.exists(MODEL_PATH):
-      st.error("Please add a user first.")
-    else:
-      if st.session_state.run_camera:
+     else:
+        if st.session_state.run_camera:
 
-       picture = st.camera_input("Take Attendance")
+            picture = st.camera_input("Take Attendance")
 
-       if picture is not None:
+            if picture is not None:
 
-        with st.spinner("Processing attendance..."):
+                with st.spinner("Processing attendance..."):
 
-          file_bytes = np.asarray(
-            bytearray(picture.read()),
-            dtype=np.uint8
-          )
-
+                    file_bytes = np.asarray(
+                        bytearray(picture.read()),
+                        dtype=np.uint8
+                    )
         frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
         faces = extract_faces(frame)
