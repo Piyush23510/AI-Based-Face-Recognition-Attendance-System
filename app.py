@@ -620,7 +620,6 @@ elif menu == "📸 Attendance":
     with col1:
         if st.button("Start Camera"):
             st.session_state.run_camera = True
-            st.success("Camera started")
             conn = get_conn()
             cursor = conn.cursor()
 
@@ -638,8 +637,10 @@ elif menu == "📸 Attendance":
             conn.close()
             st.cache_data.clear()
 
-    if not os.path.exists('static/face_recognition_model.pkl'):
-        st.error("Please add a user first.")
+    MODEL_PATH = os.path.join("static", "face_recognition_model.pkl")
+
+    if not os.path.exists(MODEL_PATH):
+      st.error("Please add a user first.")
     else:
       if st.session_state.run_camera:
 
