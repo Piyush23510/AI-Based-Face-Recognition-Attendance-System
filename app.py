@@ -756,8 +756,6 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
       if "camera_key" not in st.session_state:
         st.session_state.camera_key = 0     
       if not name or not user_id:
-
-        st.button("📸 Capture Face", disabled=True)
         st.warning("⚠️ Enter name and ID first")
 
       else:
