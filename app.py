@@ -11,9 +11,7 @@ import time
 import plotly.express as px
 import bcrypt
 
-
-
-# ---------------- CONFIG ----------------
+#CONFIG
 st.set_page_config(
     page_title="Face Attendance",
     page_icon="📸",
@@ -30,7 +28,6 @@ footer {visibility: hidden;}
 nimgs = 5
 datetoday = str(date.today())
 
-# FIX 1: Use cv2.data.haarcascades to prevent "missing haarcascade_frontalface_default.xml" errors
 cascade_path = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_default.xml')
 face_detector = cv2.CascadeClassifier(cascade_path)
 os.makedirs('static/faces', exist_ok=True)
@@ -97,7 +94,7 @@ def login_user(username, password):
 
     return None
 
-# ---------------- DATABASE ----------------
+#DATABASE
 def init_db():
     conn = sqlite3.connect('attendance.db')
     cursor = conn.cursor()
@@ -140,7 +137,7 @@ def init_db():
 
 init_db()
 
-# ---------------- TIMETABLE ----------------
+#TIMETABLE
 timetable = {
     "Monday": ["AI", "ML"],
     "Tuesday": ["DBMS", "AI"],
@@ -176,7 +173,7 @@ def auto_add_classes():
     
 auto_add_classes()
 
-# ---------------- FUNCTIONS ----------------
+#FUNCTIONS
 def normalize_roll(value):
     try:
         return int(float(value))
@@ -231,7 +228,6 @@ def train_model():
         print("Model trained successfully")
 
 def add_attendance(name, subject):
-    # FIX 3: Robust string split in case of multiple underscores
     parts = name.rsplit('_', 1)
     if len(parts) == 2:
         username, userid = parts
@@ -331,7 +327,7 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.role = None    
 
-# ---------------- UI ----------------
+#  UI 
 st.markdown("## Face Recognition Attendance System")
 st.markdown("---")
 
@@ -407,7 +403,7 @@ if not st.session_state.logged_in:
 
     st.stop()
 
-# ---------------- SIDEBAR ----------------
+#SIDEBAR
 st.sidebar.title("📊 Navigation")
 
 if st.session_state.role == "admin":
@@ -431,7 +427,7 @@ if st.sidebar.button("Logout"):
     st.session_state.clear()
     st.rerun()
 
-# ---------------- HOME ----------------
+# HOME
 if menu in ["🏠 Admin Dashboard", "🏠 My Dashboard"]:
 
     st.markdown("<h1 style='text-align: center; color: #4CAF50;'>📊 Dashboard</h1>", unsafe_allow_html=True)
@@ -582,7 +578,7 @@ elif menu in ["📊 Analytics", "📊 My Analytics"]:
     else:
         st.info("Not enough data today to generate insights.")
 
-# ---------------- START CAMERA ----------------
+# START CAMERA
 elif menu == "📸 Attendance":
 
     st.subheader("Camera Control")
@@ -666,7 +662,7 @@ elif menu == "📸 Attendance":
         else:
             st.error("No face detected")
 
-# ---------------- SUBJECT TABLES ----------------
+#SUBJECT TABLES
 elif menu in ["📚 Subjects", "📚 My Subjects"]:
 
     conn = sqlite3.connect('attendance.db')
@@ -728,7 +724,7 @@ elif menu in ["📚 Subjects", "📚 My Subjects"]:
     else:
         st.info("No attendance data available yet.")
 
-# ---------------- ADD USER ----------------
+#ADD USER
 elif menu == "➕ Add User" and st.session_state.role == "admin":
 
     st.subheader("Register New User")
@@ -770,8 +766,6 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
         os.makedirs(user_dir, exist_ok=True)
 
         existing_images = len(os.listdir(user_dir))
-
-        # Hide camera after enough images collected
         if existing_images < nimgs:
 
             picture = st.camera_input(
@@ -811,8 +805,6 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
                     st.success(
                         f"✅ Image {existing_images + 1}/{nimgs} saved"
                     )
-
-                    # Refresh camera for next image
                     st.session_state.camera_key += 1
 
                     if existing_images + 1 >= nimgs:
