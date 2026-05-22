@@ -9,9 +9,16 @@ import joblib
 import sqlite3
 import time
 import plotly.express as px
+import bcrypt
+
+
 
 # ---------------- CONFIG ----------------
-st.set_page_config(page_title="Face Attendance", layout="wide")
+st.set_page_config(
+    page_title="Face Attendance",
+    page_icon="📸",
+    layout="wide"
+)
 
 st.markdown("""
 <style>
@@ -35,12 +42,26 @@ def register_user(username, password, role, roll):
     username = username.strip()
     password = password.strip()
 
+    cursor.execute(
+        "SELECT username FROM users WHERE username=?",
+        (username,)
+    )
+
+    if cursor.fetchone():
+        st.error("Username already exists!")
+        conn.close()
+        return
+
+    hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+
     try:
         cursor.execute(
             "INSERT INTO users (username, password, role, roll) VALUES (?, ?, ?, ?)",
-            (username, password, role, roll)
+            (username, hashed_password.decode(), role, roll)
         )
         conn.commit()
+        st.success("Registration successful!")
+
     except Exception as e:
         st.error(f"Registration error: {e}")
 
@@ -51,16 +72,30 @@ def login_user(username, password):
     cursor = conn.cursor()
 
     username = username.strip()
-    password = password.strip()
 
     cursor.execute(
-        "SELECT role, roll FROM users WHERE username=? AND password=?",
-        (username, password)
+        "SELECT password, role, roll FROM users WHERE username=?",
+        (username,)
     )
 
     result = cursor.fetchone()
     conn.close()
-    return result
+
+    if result:
+        stored_password, role, roll = result
+
+        try:
+            if bcrypt.checkpw(
+                password.encode(),
+                stored_password.encode()
+            ):
+                return role, roll
+
+        except ValueError:
+            st.error("Stored password is not a valid bcrypt hash")
+            return None
+
+    return None
 
 # ---------------- DATABASE ----------------
 def init_db():
@@ -346,18 +381,17 @@ if not st.session_state.logged_in:
                 
                 roll = None
                 admin_key = None
+                admin_invite_code = "A7xQ#29LmP@2026"
                 
                 if login_type == "Student":
                     roll = st.text_input("Roll Number")
                 else:
                     admin_key = st.text_input("Admin Invite Code (Required)", type="password")
-                    st.caption("Hint: The admin invite code is 'admin123'")
-
                 if st.form_submit_button("Register"):
                     if new_user and new_pass:
                         if login_type == "Student" and not roll:
                             st.warning("Please enter your roll number!")
-                        elif login_type == "Admin" and admin_key != "admin123":
+                        elif login_type == "Admin" and admin_key != admin_invite_code:
                             st.error("Invalid Admin Invite Code!")
                         else:
                             db_role = "user" if login_type == "Student" else "admin"
@@ -394,8 +428,7 @@ else:
 menu = st.sidebar.radio("Go to", menu_options)
 
 if st.sidebar.button("Logout"):
-    st.session_state.logged_in = False
-    st.session_state.role = None
+    st.session_state.clear()
     st.rerun()
 
 # ---------------- HOME ----------------
@@ -590,16 +623,18 @@ elif menu == "📸 Attendance":
 
        if picture is not None:
 
-        file_bytes = np.asarray(
+        with st.spinner("Processing attendance..."):
+
+          file_bytes = np.asarray(
             bytearray(picture.read()),
             dtype=np.uint8
-        )
+          )
 
         frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
         faces = extract_faces(frame)
 
-        if len(faces) > 0:
+        if len(faces) == 1:
 
             model = joblib.load(
                 'static/face_recognition_model.pkl'
@@ -612,12 +647,21 @@ elif menu == "📸 Attendance":
                 (50, 50)
             ).reshape(1, -1)
 
-            name = model.predict(face)[0]
+            prediction = model.predict(face)[0]
+            distance, _ = model.kneighbors(face)
 
-            if add_attendance(name, subject):
-                st.success(f"Attendance marked for {name}")
+            if distance[0][0] > 4000:
+               st.error("Unknown face detected")
             else:
-                st.warning("Attendance already marked")
+               name = prediction
+
+               if add_attendance(name, subject):
+                    st.success(f"Attendance marked for {name}")
+               else:
+                    st.warning("Attendance already marked")
+
+        elif len(faces)>1:
+            st.error("Multiple faces detected. Only one person allowed.")
 
         else:
             st.error("No face detected")
