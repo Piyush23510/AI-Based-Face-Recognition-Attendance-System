@@ -10,6 +10,9 @@ import sqlite3
 import time
 import plotly.express as px
 import bcrypt
+
+
+
 #CONFIG
 st.set_page_config(
     page_title="Face Attendance",
@@ -48,12 +51,15 @@ def register_user(username, password, role, roll):
         conn.close()
         return
 
-    hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+    hashed_password = bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
 
     try:
         cursor.execute(
             "INSERT INTO users (username, password, role, roll) VALUES (?, ?, ?, ?)",
-            (username, hashed_password.decode(), role, roll)
+            (username, hashed_password, role, roll)
         )
         conn.commit()
         st.success("Registration successful!")
@@ -64,10 +70,11 @@ def register_user(username, password, role, roll):
     conn.close()
 
 def login_user(username, password):
+    username = username.strip()
+    password = password.strip()
+
     conn = sqlite3.connect('attendance.db')
     cursor = conn.cursor()
-
-    username = username.strip()
 
     cursor.execute(
         "SELECT password, role, roll FROM users WHERE username=?",
@@ -77,19 +84,22 @@ def login_user(username, password):
     result = cursor.fetchone()
     conn.close()
 
-    if result:
-        stored_password, role, roll = result
+    if not result:
+        return None
 
-        try:
-            if bcrypt.checkpw(
-                password.encode(),
-                stored_password.encode()
-            ):
-                return role, roll
+    stored_password, role, roll = result
 
-        except ValueError:
-            st.error("Stored password is not a valid bcrypt hash")
-            return None
+    try:
+        stored_password = stored_password.encode("utf-8")
+
+        if bcrypt.checkpw(
+            password.encode("utf-8"),
+            stored_password
+        ):
+            return role, roll
+
+    except Exception as e:
+        print("Login error:", e)
 
     return None
 
@@ -258,6 +268,12 @@ def add_attendance(name, subject):
     conn.close()
     return False
 
+def safe_roll(value):
+    try:
+        return int(value)
+    except:
+        return None
+    
 def get_today_attendance():
     conn = sqlite3.connect('attendance.db')
 
@@ -344,12 +360,14 @@ if not st.session_state.logged_in:
         with tab1:
             with st.form("login_form", clear_on_submit=True):
                 st.markdown(f"#### {login_type} Login")
-                username = st.text_input("Username")
-                password = st.text_input("Password", type="password")
+                username = st.text_input("Username", key="login_username")
+                password = st.text_input("Password", type="password", key="login_password")
 
                 submitted = st.form_submit_button("Login")
 
                 if submitted:
+                    username = username.strip()
+                    password = password.strip()
                     result = login_user(username, password)
 
                     if result:
@@ -361,7 +379,7 @@ if not st.session_state.logged_in:
                         else:
                             st.session_state.logged_in = True
                             st.session_state.role = role
-                            st.session_state.roll = int(roll) if roll is not None else None
+                            st.session_state.roll = safe_roll(roll)
                             st.success(f"Logged in successfully as {role}!")
                             time.sleep(1)
                             st.rerun()
@@ -394,7 +412,7 @@ if not st.session_state.logged_in:
                                 new_user,
                                 new_pass,
                                 db_role,
-                                int(roll) if roll else None
+                                safe_roll(roll)
                             )
                     else:
                         st.warning("Please fill all details.")
@@ -591,7 +609,7 @@ elif menu == "📸 Attendance":
     with col1:
         if st.button("Start Camera"):
             st.session_state.run_camera = True
-
+            st.success("Camera started")
             conn = sqlite3.connect('attendance.db')
             cursor = conn.cursor()
 
@@ -609,7 +627,7 @@ elif menu == "📸 Attendance":
             conn.close()
 
     if not os.path.exists('static/face_recognition_model.pkl'):
-        st.error("Model not trained yet! Please add a user first.")
+        st.error("Please add a user first.")
     else:
       if st.session_state.run_camera:
 
@@ -733,30 +751,44 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("💾 Save Student"):
-            if name and user_id:
+     if st.button("💾 Save Student"):
+        if not name or not user_id:
+            st.warning("⚠️ Enter name and ID")
+        else:
+            roll_val = safe_roll(user_id)
+
+            # 2. SECOND CHECK (invalid roll)
+            if roll_val is None:
+                st.error("Roll number must be numeric!")
+
+            else:
+                # 3. ACTUAL DATABASE INSERT
                 conn = sqlite3.connect('attendance.db')
                 cursor = conn.cursor()
 
                 cursor.execute(
                     "INSERT OR IGNORE INTO students VALUES (?, ?)",
-                    (name, int(user_id))
+                    (name, roll_val)
                 )
 
                 conn.commit()
                 conn.close()
 
                 st.success("✅ Student saved successfully!")
-            else:
-                st.warning("⚠️ Enter name and ID")
     with col2:
 
       if "camera_key" not in st.session_state:
-        st.session_state.camera_key = 0     
+        st.session_state.camera_key = 0
+
+    # ❌ BLOCK CAMERA IF INPUT IS INVALID
       if not name or not user_id:
-
         st.warning("⚠️ Enter name and ID first")
+        st.stop()
 
+      roll_val = safe_roll(user_id)
+
+      if roll_val is None:
+        st.stop()
       else:
 
         user_dir = f"static/faces/{name}_{user_id}"
