@@ -10,7 +10,6 @@ import sqlite3
 import time
 import plotly.express as px
 import bcrypt
-
 #CONFIG
 st.set_page_config(
     page_title="Face Attendance",
@@ -137,7 +136,7 @@ def init_db():
 
 init_db()
 
-#TIMETABLE
+#TIMETABLE 
 timetable = {
     "Monday": ["AI", "ML"],
     "Tuesday": ["DBMS", "AI"],
@@ -327,7 +326,7 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.role = None    
 
-#  UI 
+#UI
 st.markdown("## Face Recognition Attendance System")
 st.markdown("---")
 
@@ -343,7 +342,7 @@ if not st.session_state.logged_in:
         tab1, tab2 = st.tabs(["Login", "Create Account"])
 
         with tab1:
-            with st.form("login_form"):
+            with st.form("login_form", clear_on_submit=True):
                 st.markdown(f"#### {login_type} Login")
                 username = st.text_input("Username")
                 password = st.text_input("Password", type="password")
@@ -370,7 +369,7 @@ if not st.session_state.logged_in:
                         st.error("Invalid credentials!")
 
         with tab2:
-            with st.form("register_form"):
+            with st.form("register_form", clear_on_submit=True):
                 st.markdown(f"#### Register as {login_type}")
                 new_user = st.text_input("New Username")
                 new_pass = st.text_input("New Password", type="password")
@@ -397,7 +396,6 @@ if not st.session_state.logged_in:
                                 db_role,
                                 int(roll) if roll else None
                             )
-                            st.success(f"{login_type} account created! You can now login.")
                     else:
                         st.warning("Please fill all details.")
 
@@ -427,7 +425,7 @@ if st.sidebar.button("Logout"):
     st.session_state.clear()
     st.rerun()
 
-# HOME
+#HOME
 if menu in ["🏠 Admin Dashboard", "🏠 My Dashboard"]:
 
     st.markdown("<h1 style='text-align: center; color: #4CAF50;'>📊 Dashboard</h1>", unsafe_allow_html=True)
@@ -578,7 +576,7 @@ elif menu in ["📊 Analytics", "📊 My Analytics"]:
     else:
         st.info("Not enough data today to generate insights.")
 
-# START CAMERA
+#START CAMERA
 elif menu == "📸 Attendance":
 
     st.subheader("Camera Control")
@@ -756,6 +754,7 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
       if "camera_key" not in st.session_state:
         st.session_state.camera_key = 0     
       if not name or not user_id:
+
         st.warning("⚠️ Enter name and ID first")
 
       else:
@@ -803,6 +802,8 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
                     st.success(
                         f"✅ Image {existing_images + 1}/{nimgs} saved"
                     )
+
+                    # Refresh camera for next image
                     st.session_state.camera_key += 1
 
                     if existing_images + 1 >= nimgs:
