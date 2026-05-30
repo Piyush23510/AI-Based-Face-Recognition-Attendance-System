@@ -64,7 +64,11 @@ def login_user(username, password):
     conn.close()
 
     if not result:
-        return None
+        return return {
+            "success": False,
+            "message": "User not registered. Please register first."
+        }
+
 
     stored_password, role, roll = result
 
