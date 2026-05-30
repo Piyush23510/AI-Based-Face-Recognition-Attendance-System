@@ -4,16 +4,22 @@ import os
 from datetime import date, datetime
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
-import av
 import pandas as pd
 import joblib
-import sqlite3
 import time
 import plotly.express as px
+import bcrypt
+import psycopg2
+from dotenv import load_dotenv
 
-# ---------------- CONFIG ----------------
-st.set_page_config(page_title="Face Attendance", layout="wide")
+load_dotenv()
+
+#CONFIG
+st.set_page_config(
+    page_title="Face Attendance",
+    page_icon="📸",
+    layout="wide"
+)
 
 st.markdown("""
 <style>
@@ -22,51 +28,87 @@ footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-nimgs = 50
+nimgs = 5
 datetoday = str(date.today())
 
-# FIX 1: Use cv2.data.haarcascades to prevent "missing haarcascade_frontalface_default.xml" errors
 cascade_path = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_default.xml')
 face_detector = cv2.CascadeClassifier(cascade_path)
 os.makedirs('static/faces', exist_ok=True)
 
+def get_conn():
+    return psycopg2.connect(
+        os.getenv("DATABASE_URL"),
+        sslmode="require"
+    )
 def register_user(username, password, role, roll):
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     username = username.strip()
     password = password.strip()
 
+    cursor.execute("SELECT * FROM users WHERE username=%s", (username,))
+
+    if cursor.fetchone():
+        st.error("Username already exists!")
+        conn.close()
+        return
+
+    hashed_password = bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
     try:
         cursor.execute(
-            "INSERT INTO users (username, password, role, roll) VALUES (?, ?, ?, ?)",
-            (username, password, role, roll)
+            "INSERT INTO users (username, password, role, roll) VALUES (%s, %s, %s, %s)",
+            (username, hashed_password, role, roll)
         )
         conn.commit()
+        st.cache_data.clear()
+        st.success("Registration successful!")
+
     except Exception as e:
         st.error(f"Registration error: {e}")
 
     conn.close()
 
 def login_user(username, password):
-    conn = sqlite3.connect('attendance.db')
-    cursor = conn.cursor()
-
     username = username.strip()
     password = password.strip()
 
-    cursor.execute(
-        "SELECT role, roll FROM users WHERE username=? AND password=?",
-        (username, password)
-    )
+    conn = get_conn()
+    cursor = conn.cursor()
 
+    cursor.execute(
+    "SELECT password, role, roll FROM users WHERE username=%s",
+    (username,)
+    )
     result = cursor.fetchone()
     conn.close()
-    return result
 
-# ---------------- DATABASE ----------------
+    if not result:
+        return None
+
+    stored_password, role, roll = result
+
+    try:
+        stored_password = stored_password.encode("utf-8")
+
+        if bcrypt.checkpw(
+            password.encode("utf-8"),
+            stored_password
+        ):
+            return role, roll
+
+    except Exception as e:
+        print("Login error:", e)
+
+    return None
+
+#DATABASE
 def init_db():
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -105,9 +147,10 @@ def init_db():
     conn.commit()
     conn.close()
 
-init_db()
+if "db_initialized" not in st.session_state:
+    init_db()
 
-# ---------------- TIMETABLE ----------------
+#TIMETABLE 
 timetable = {
     "Monday": ["AI", "ML"],
     "Tuesday": ["DBMS", "AI"],
@@ -124,32 +167,44 @@ def auto_add_classes():
 
     subjects_today = timetable.get(today_day, [])
 
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     for subject in subjects_today:
         cursor.execute("""
             SELECT * FROM classes 
-            WHERE subject=? AND date=?
+            WHERE subject=%s AND date=%s
         """, (subject, today_date))
 
         if cursor.fetchone() is None:
             cursor.execute("""
-                INSERT INTO classes VALUES (?, ?)
+                INSERT INTO classes VALUES (%s, %s)
             """, (subject, today_date))
 
     conn.commit()
     conn.close()
+    st.cache_data.clear()
     
-auto_add_classes()
+if "db_initialized" not in st.session_state:
+    auto_add_classes()
+    st.session_state.db_initialized = True
 
-# ---------------- FUNCTIONS ----------------
+#FUNCTIONS
 def normalize_roll(value):
     try:
         return int(float(value))
     except:
         return None
+def has_users():
+    conn = get_conn()
+    cur = conn.cursor()
 
+    cur.execute("SELECT COUNT(*) FROM users WHERE role='user'")
+    count = cur.fetchone()[0]
+
+    conn.close()
+    return count > 0
+    
 def extract_faces(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     faces = face_detector.detectMultiScale(gray, 1.2, 5)
@@ -198,7 +253,6 @@ def train_model():
         print("Model trained successfully")
 
 def add_attendance(name, subject):
-    # FIX 3: Robust string split in case of multiple underscores
     parts = name.rsplit('_', 1)
     if len(parts) == 2:
         username, userid = parts
@@ -207,12 +261,12 @@ def add_attendance(name, subject):
 
     now = datetime.now()
 
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     cursor = conn.cursor()
 
     cursor.execute("""
         SELECT * FROM attendance 
-        WHERE roll=? AND date=? AND subject=?
+        WHERE roll=%s AND date=%s AND subject=%s
     """, (int(userid), str(now.date()), subject))
 
     if cursor.fetchone() is None:
@@ -221,28 +275,49 @@ def add_attendance(name, subject):
         print("Detected Roll:", userid)
 
         cursor.execute("""
-            INSERT INTO attendance VALUES (?, ?, ?, ?, ?)
+            INSERT INTO attendance VALUES (%s, %s, %s, %s, %s)
         """, (username, int(userid), subject, str(now.date()), now.strftime("%H:%M:%S")))
         conn.commit()
+        st.cache_data.clear()
         conn.close()
         return True
 
     conn.close()
     return False
 
+def safe_roll(value):
+    try:
+        return int(value)
+    except:
+        return None
+    
+@st.cache_data
+def get_students():
+    conn = get_conn()
+    df = pd.read_sql_query("""
+        SELECT username AS name, roll FROM users WHERE role='user'
+        UNION
+        SELECT name, roll FROM students
+    """, conn)
+    conn.close()
+    return df
+
+@st.cache_data
 def get_today_attendance():
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
 
     df = pd.read_sql_query(
-        "SELECT * FROM attendance WHERE date=?",
+        "SELECT * FROM attendance WHERE date=%s",
         conn,
         params=(datetoday,)
     )
 
     conn.close()
     return df
+
+@st.cache_data
 def calculate_percentage():
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
 
     classes_df = pd.read_sql_query(
         "SELECT subject, COUNT(*) as total_classes FROM classes GROUP BY subject",
@@ -271,8 +346,9 @@ def calculate_percentage():
 
     return merged
 
+@st.cache_data
 def get_absentees(subject, selected_date):
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
 
     students = pd.read_sql_query("""
         SELECT username AS name, roll FROM users WHERE role='user'
@@ -283,7 +359,7 @@ def get_absentees(subject, selected_date):
     present = pd.read_sql_query("""
         SELECT DISTINCT roll 
         FROM attendance 
-        WHERE subject=? AND date=?
+        WHERE subject=%s AND date=%s
     """, conn, params=(subject, selected_date))
 
     conn.close()
@@ -294,41 +370,11 @@ def get_absentees(subject, selected_date):
     absent = students[~students["roll"].isin(present["roll"])]
     return absent
 
-# FIX 4: Replace deprecated VideoTransformerBase with VideoProcessorBase
-def get_processor_factory(subject):
-    class FaceRecognitionProcessor(VideoProcessorBase):
-        def __init__(self):
-            self.model = joblib.load('static/face_recognition_model.pkl')
-            self.marked = set()
-            self.subject = subject
-
-        def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-            img = frame.to_ndarray(format="bgr24")
-            faces = extract_faces(img)
-
-            for (x, y, w, h) in faces[:1]:
-                face_img = cv2.resize(img[y:y+h, x:x+w], (50, 50)).reshape(1, -1)
-
-                name = self.model.predict(face_img)[0]
-
-                print("Predicted:", name)
-
-                if name not in self.marked and "_" in name:
-                    if add_attendance(name, self.subject):
-                        self.marked.add(name)
-
-                cv2.rectangle(img, (x, y), (x+w, y+h), (0,255,0), 2)
-                cv2.putText(img, name, (x, y-10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
-
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
-    return FaceRecognitionProcessor
-
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.role = None    
 
-# ---------------- UI ----------------
+#UI
 st.markdown("## Face Recognition Attendance System")
 st.markdown("---")
 
@@ -344,14 +390,16 @@ if not st.session_state.logged_in:
         tab1, tab2 = st.tabs(["Login", "Create Account"])
 
         with tab1:
-            with st.form("login_form"):
+            with st.form("login_form", clear_on_submit=True):
                 st.markdown(f"#### {login_type} Login")
-                username = st.text_input("Username")
-                password = st.text_input("Password", type="password")
+                username = st.text_input("Username", key="login_username")
+                password = st.text_input("Password", type="password", key="login_password")
 
                 submitted = st.form_submit_button("Login")
 
                 if submitted:
+                    username = username.strip()
+                    password = password.strip()
                     result = login_user(username, password)
 
                     if result:
@@ -363,7 +411,7 @@ if not st.session_state.logged_in:
                         else:
                             st.session_state.logged_in = True
                             st.session_state.role = role
-                            st.session_state.roll = int(roll) if roll is not None else None
+                            st.session_state.roll = safe_roll(roll)
                             st.success(f"Logged in successfully as {role}!")
                             time.sleep(1)
                             st.rerun()
@@ -371,25 +419,24 @@ if not st.session_state.logged_in:
                         st.error("Invalid credentials!")
 
         with tab2:
-            with st.form("register_form"):
+            with st.form("register_form", clear_on_submit=True):
                 st.markdown(f"#### Register as {login_type}")
                 new_user = st.text_input("New Username")
                 new_pass = st.text_input("New Password", type="password")
                 
                 roll = None
                 admin_key = None
+                admin_invite_code = "A7xQ#29LmP@2026"
                 
                 if login_type == "Student":
                     roll = st.text_input("Roll Number")
                 else:
                     admin_key = st.text_input("Admin Invite Code (Required)", type="password")
-                    st.caption("Hint: The admin invite code is 'admin123'")
-
                 if st.form_submit_button("Register"):
                     if new_user and new_pass:
                         if login_type == "Student" and not roll:
                             st.warning("Please enter your roll number!")
-                        elif login_type == "Admin" and admin_key != "admin123":
+                        elif login_type == "Admin" and admin_key != admin_invite_code:
                             st.error("Invalid Admin Invite Code!")
                         else:
                             db_role = "user" if login_type == "Student" else "admin"
@@ -397,15 +444,14 @@ if not st.session_state.logged_in:
                                 new_user,
                                 new_pass,
                                 db_role,
-                                int(roll) if roll else None
+                                safe_roll(roll)
                             )
-                            st.success(f"{login_type} account created! You can now login.")
                     else:
                         st.warning("Please fill all details.")
 
     st.stop()
 
-# ---------------- SIDEBAR ----------------
+#SIDEBAR
 st.sidebar.title("📊 Navigation")
 
 if st.session_state.role == "admin":
@@ -426,22 +472,15 @@ else:
 menu = st.sidebar.radio("Go to", menu_options)
 
 if st.sidebar.button("Logout"):
-    st.session_state.logged_in = False
-    st.session_state.role = None
+    st.session_state.clear()
     st.rerun()
 
-# ---------------- HOME ----------------
+#HOME
 if menu in ["🏠 Admin Dashboard", "🏠 My Dashboard"]:
 
     st.markdown("<h1 style='text-align: center; color: #4CAF50;'>📊 Dashboard</h1>", unsafe_allow_html=True)
 
-    conn = sqlite3.connect('attendance.db')
-    df_students = pd.read_sql_query("""
-        SELECT username AS name, roll FROM users WHERE role='user'
-        UNION
-        SELECT name, roll FROM students
-    """, conn)
-    conn.close()
+    df_students = get_students()
 
     if st.session_state.role == "admin":
         st.markdown("### 👨‍🎓 All Students")
@@ -560,13 +599,7 @@ elif menu in ["📊 Analytics", "📊 My Analytics"]:
             st.plotly_chart(fig2, use_container_width=True)
 
             if st.session_state.role == "admin":
-                conn = sqlite3.connect('attendance.db')
-                df_students = pd.read_sql_query("""
-                    SELECT username AS name, roll FROM users WHERE role='user'
-                    UNION
-                    SELECT name, roll FROM students
-                """, conn)
-                conn.close()
+                df_students = get_students()
 
                 total_students = len(df_students)
                 present = len(df)
@@ -581,7 +614,7 @@ elif menu in ["📊 Analytics", "📊 My Analytics"]:
     else:
         st.info("Not enough data today to generate insights.")
 
-# ---------------- START CAMERA ----------------
+#START CAMERA
 elif menu == "📸 Attendance":
 
     st.subheader("Camera Control")
@@ -594,43 +627,85 @@ elif menu == "📸 Attendance":
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("Start Camera"):
-            st.session_state.run_camera = True
+     if st.button("Start Camera"):
+        st.session_state.run_camera = True
 
-            conn = sqlite3.connect('attendance.db')
-            cursor = conn.cursor()
+        conn = get_conn()
+        cursor = conn.cursor()
 
+        cursor.execute("""
+            SELECT * FROM classes 
+            WHERE subject=%s AND date=%s
+        """, (subject, str(date.today())))
+
+        if not cursor.fetchone():
             cursor.execute("""
-                SELECT * FROM classes 
-                WHERE subject=? AND date=?
+                INSERT INTO classes VALUES (%s, %s)
             """, (subject, str(date.today())))
 
-            if not cursor.fetchone():
-                cursor.execute("""
-                    INSERT INTO classes VALUES (?, ?)
-                """, (subject, str(date.today())))
+        conn.commit()
+        conn.close()
+        st.cache_data.clear()
 
-            conn.commit()
-            conn.close()
+     if not has_users():
+        st.error("No users found. Please add a user first.")
 
-    with col2:
-        if st.button("Stop Camera"):
-            st.session_state.run_camera = False
-            st.success("✅ Attendance marked successfully!")
+     elif not os.path.exists('static/face_recognition_model.pkl'):
+        st.error("Model not trained. Please add users and capture faces.")
 
-    if not os.path.exists('static/face_recognition_model.pkl'):
-        st.error("Model not trained yet! Please add a user first.")
-    else:
+     else:
         if st.session_state.run_camera:
-            webrtc_streamer(
-                key="attendance",
-                video_processor_factory=get_processor_factory(subject) # FIX 5: Uses new processor factory
+
+            picture = st.camera_input("Take Attendance")
+
+            if picture is not None:
+
+                with st.spinner("Processing attendance..."):
+
+                    file_bytes = np.asarray(
+                        bytearray(picture.read()),
+                        dtype=np.uint8
+                    )
+        frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+        faces = extract_faces(frame)
+
+        if len(faces) == 1:
+
+            model = joblib.load(
+                'static/face_recognition_model.pkl'
             )
 
-# ---------------- SUBJECT TABLES ----------------
+            x, y, w, h = faces[0]
+
+            face = cv2.resize(
+                frame[y:y+h, x:x+w],
+                (50, 50)
+            ).reshape(1, -1)
+
+            prediction = model.predict(face)[0]
+            distance, _ = model.kneighbors(face)
+
+            if distance[0][0] > 4000:
+               st.error("Unknown face detected")
+            else:
+               name = prediction
+
+               if add_attendance(name, subject):
+                    st.success(f"Attendance marked for {name}")
+               else:
+                    st.warning("Attendance already marked")
+
+        elif len(faces)>1:
+            st.error("Multiple faces detected. Only one person allowed.")
+
+        else:
+            st.error("No face detected")
+
+#SUBJECT TABLES
 elif menu in ["📚 Subjects", "📚 My Subjects"]:
 
-    conn = sqlite3.connect('attendance.db')
+    conn = get_conn()
     df = pd.read_sql_query("SELECT * FROM attendance", conn)
     conn.close()
 
@@ -653,28 +728,28 @@ elif menu in ["📚 Subjects", "📚 My Subjects"]:
         st.dataframe(filtered_df, use_container_width=True)
 
         if subject_filter != "All":
-            conn = sqlite3.connect('attendance.db')
+            conn = get_conn()
             check_class = pd.read_sql_query(
-                "SELECT * FROM classes WHERE subject=? AND date=?",
+                "SELECT * FROM classes WHERE subject=%s AND date=%s",
                 conn,
                 params=(subject_filter, selected_date)
             )
             conn.close()
 
             if check_class.empty:
-                st.warning("⚠️ No class conducted on this date")
+                st.warning(" No class conducted on this date")
             else:
                 absent_df = get_absentees(subject_filter, selected_date)
                 
                 if st.session_state.role == "admin":
-                    st.markdown("### 🚫 Absentees")
+                    st.markdown("### Absentees")
                     if not absent_df.empty:
                         st.dataframe(absent_df, use_container_width=True)
                         st.error(f"{len(absent_df)} students absent")
                     else:
-                        st.success("No absentees 🎉")
+                        st.success("No absentees ")
                 else:
-                    st.markdown("### 🚫 My Status")
+                    st.markdown("### My Status")
                     if not absent_df.empty:
                         absent_df["roll"] = absent_df["roll"].apply(normalize_roll)
                         my_absent = absent_df[
@@ -683,13 +758,13 @@ elif menu in ["📚 Subjects", "📚 My Subjects"]:
                         if not my_absent.empty:
                             st.error("You were absent for this class!")
                         else:
-                            st.success("You were present! 🎉")
+                            st.success("You were present!")
                     else:
-                        st.success("You were present! 🎉")
+                        st.success("You were present!")
     else:
         st.info("No attendance data available yet.")
 
-# ---------------- ADD USER ----------------
+#ADD USER
 elif menu == "➕ Add User" and st.session_state.role == "admin":
 
     st.subheader("Register New User")
@@ -700,64 +775,91 @@ elif menu == "➕ Add User" and st.session_state.role == "admin":
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("💾 Save Student"):
-            if name and user_id:
-                conn = sqlite3.connect('attendance.db')
+     if st.button("Save Student"):
+        if not name or not user_id:
+            st.warning("Enter name and ID")
+        else:
+            roll_val = safe_roll(user_id)
+            if roll_val is None:
+                st.error("Roll number must be numeric!")
+
+            else:
+                conn = get_conn()
                 cursor = conn.cursor()
 
                 cursor.execute(
-                    "INSERT OR IGNORE INTO students VALUES (?, ?)",
-                    (name, int(user_id))
+                  "INSERT INTO students VALUES (%s, %s) ON CONFLICT (roll) DO NOTHING",
+                  (name, roll_val)
                 )
 
                 conn.commit()
                 conn.close()
+                st.cache_data.clear()
 
-                st.success("✅ Student saved successfully!")
-            else:
-                st.warning("⚠️ Enter name and ID")
-
+                st.success("Student saved successfully!")
     with col2:
-        if st.button("📸 Capture Face"):
-            if name and user_id:
-                user_dir = f'static/faces/{name}_{user_id}'
-                os.makedirs(user_dir, exist_ok=True)
 
-                # FIX 6: Better camera error handling and bounds checking
-                cap = cv2.VideoCapture(0)
-                if not cap.isOpened():
-                    st.error("Error: Could not access the camera. Make sure it is connected and not used by another app.")
+      if "camera_key" not in st.session_state:
+        st.session_state.camera_key = 0
+
+    # validate inputs first
+      if not name or not user_id:
+        st.warning("Enter name and ID first")
+
+      elif safe_roll(user_id) is None:
+        st.error("Invalid roll number. Camera disabled.")
+
+      else:
+        roll_val = safe_roll(user_id)
+
+        user_dir = f"static/faces/{name}_{user_id}"
+        os.makedirs(user_dir, exist_ok=True)
+
+        existing_images = len(os.listdir(user_dir))
+
+        if existing_images < nimgs:
+
+            picture = st.camera_input(
+                f"Capture Face ({existing_images}/{nimgs})",
+                key=f"camera_{st.session_state.camera_key}"
+            )
+
+            if picture is not None:
+
+                file_bytes = np.asarray(
+                    bytearray(picture.read()),
+                    dtype=np.uint8
+                )
+
+                frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+                faces = extract_faces(frame)
+
+                if len(faces) == 0:
+                    st.error("No face detected!")
                 else:
-                    count = 0
-                    frame_placeholder = st.empty()
+                    x, y, w, h = faces[0]
+                    face = frame[y:y+h, x:x+w]
 
-                    while count < nimgs:
-                        ret, frame = cap.read()
-                        if not ret:
-                            st.error("Failed to capture image. Camera may have disconnected.")
-                            break
-                        
-                        faces = extract_faces(frame)
+                    cv2.imwrite(
+                        f"{user_dir}/{name}_{existing_images}.jpg",
+                        face
+                    )
 
-                        for (x, y, w, h) in faces:
-                            face = frame[y:y+h, x:x+w]
-                            cv2.imwrite(f'{user_dir}/{name}_{count}.jpg', face)
-                            count += 1
-                            if count >= nimgs:
-                                break
+                    st.success(f"Image {existing_images + 1}/{nimgs} saved")
 
-                        frame_placeholder.image(frame, channels="BGR")
+                    st.session_state.camera_key += 1
 
-                    cap.release()
-                    time.sleep(0.1)
-                    cv2.destroyAllWindows()
+                    if existing_images + 1 >= nimgs:
+                        train_model()
+                        st.success("Face data captured & model trained!")
 
-                    frame_placeholder.empty()
-
-                    train_model()
-
-                    st.success("✅ Face data captured & model trained!")
-                    time.sleep(1)
                     st.rerun()
+
+        else:
+            st.success("Registration Complete")
+
+            if os.path.exists("static/face_recognition_model.pkl"):
+                st.success("Model file created")
             else:
-                st.warning("⚠️ Enter name and ID first")
+                st.error("Model file not found")
