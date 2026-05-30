@@ -1,0 +1,10 @@
+.env
+
+__pycache__/
+*.pyc
+
+.venv/
+venv/
+
+static/faces/
+static/face_recognition_model.pkl
