@@ -11,7 +11,7 @@ import requests
 import streamlit as st
 
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = "https://ai-based-face-recognition-attendance-j7un.onrender.com"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
